@@ -1,0 +1,398 @@
+import os
+import pathlib
+
+
+if "models" in pathlib.Path.cwd().parts:
+  while "models" in pathlib.Path.cwd().parts:
+    os.chdir('..')
+elif not pathlib.Path('models').exists():
+  !git clone --depth 1 https://github.com/tensorflow/models
+  
+  
+  #imports
+
+import numpy as np
+import os
+import six.moves.urllib as urllib
+import sys
+import tarfile
+import tensorflow as tf
+import zipfile
+
+from collections import defaultdict
+from io import StringIO
+from matplotlib import pyplot as plt
+from PIL import Image
+from IPython.display import display
+import cv2
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.applications import MobileNetV2
+from tensorflow.keras.layers import AveragePooling2D
+from tensorflow.keras.layers import Dropout
+from tensorflow.keras.layers import Flatten
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.layers import Input
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+from tensorflow.keras.preprocessing.image import img_to_array
+from tensorflow.keras.preprocessing.image import load_img
+from tensorflow.keras.utils import to_categorical
+from sklearn.preprocessing import LabelBinarizer
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+from imutils import paths
+import matplotlib.pyplot as plt
+import numpy as np
+import argparse
+import os
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+from tensorflow.keras.preprocessing.image import img_to_array
+from tensorflow.keras.models import load_model
+from imutils.video import VideoStream
+import numpy as np
+import argparse
+import imutils
+import time
+
+
+#imports from object_detection_api
+
+from object_detection.utils import ops as utils_ops
+from object_detection.utils import label_map_util
+from object_detection.utils import visualization_utils as vis_util
+
+
+# patch tf1 into `utils.ops`
+utils_ops.tf = tf.compat.v1
+
+# Patch the location of gfile
+tf.gfile = tf.io.gfile
+
+
+#function for loading model
+
+def load_model(model_name):
+  base_url = 'http://download.tensorflow.org/models/object_detection/'
+  model_file = model_name + '.tar.gz'
+  model_dir = tf.keras.utils.get_file(
+    fname=model_name, 
+    origin=base_url + model_file,
+    untar=True)
+
+  model_dir = pathlib.Path(model_dir)/"saved_model"
+
+  model = tf.saved_model.load(str(model_dir))
+  model = model.signatures['serving_default']
+
+  return model
+  
+  
+  # List of the strings that is used to add correct label for each box.
+PATH_TO_LABELS = 'models/research/object_detection/data/mscoco_label_map.pbtxt'
+category_index = label_map_util.create_category_index_from_labelmap(PATH_TO_LABELS, use_display_name=True)
+
+
+#loading ssd_mobilenet model for more speed
+
+model_name = 'ssd_mobilenet_v1_coco_2018_01_28'
+detection_model = load_model(model_name)
+
+
+#calculating area of the bounding boxes
+
+def area(cord1):
+    y11,x11,y12,x12 = cord1[0],cord1[1],cord1[2],cord1[3]
+    area1 = float(abs(y11-y12)*abs(x11-x12))
+    return area1
+area([1,2,3,4])
+
+
+
+#sorting the bounding boxes with the corresponding x coordinates to find distance between adjacent people
+
+def sort(arr):
+    ar = []
+    lent = arr.shape[0]
+    for i in range(lent):
+        ar.append(arr[i])
+    for i in range(0,lent-1):
+        for j in range(i+1,lent):
+            if ar[i][1] > ar[j][1]:
+                temp = ar[i]
+                ar[i] = ar[j]
+                ar[j] = temp
+    return ar
+    
+    
+
+def dist_bw1(cord1,cord2,image):
+    s1 , s2 = image.shape[0] , image.shape[1]
+    y11,x11,y12,x12 = cord1[0],cord1[1],cord1[2],cord1[3]
+    y21,x21,y22,x22 = cord2[0],cord2[1],cord2[2],cord2[3]
+    '''X = int(x12*s2)
+    Y = int(d1*y12)
+    
+    X1 = int(x11*s2)
+    Y1 = int(s1*y11)'''
+    #image=cv2.line(image,(X1,Y1),(X,Y),(0,255,0),9)
+    len1 = abs(y11-y12)
+    len2= abs(y21-y22)
+    c11,c12 = float((y11+y12)/2),float((x11+x12)/2)
+    c21,c22 = float((y21+y22)/2),float((x21+x22)/2)
+    #d3 = (((c12-c22)**(2) + (c11-c21)**(2))**(0.5))
+    d1 = 24.161*(len1**2) - 31.2*(len1) + 12.039
+    d2 = 24.161*(len2**2) - 31.2*(len2) + 12.039
+    d3 = (1/4360)*(c22-c12)
+    dmax = max(d1,d2)
+    dmin = min(d1,d2)
+    dmax2 = dmax - dmin
+    dist = (d3**2 + dmax2*2)**(0.5)
+    #d21 = (abs(min(d1,d2)**2 - d3**2))**(0.5)
+    #d22 = abs(d21-max(d2,d1))
+    #dist = (d3**2 + d22**2)**(0.5)
+    c11 = int(s1*c11)
+    c21 = int(s1*c21)
+    c12 = int(s2*c12)
+    c22 = int(s2*c22)
+    #image=cv2.line(image,(0,0),(c22,c21),(0,255,0),9)
+    print("d1",d1,"\n") #int((c11+c21)/2),int((c12+c22)/2)
+    print("d2",d2,"\n")
+    print("d3",c22-c12)
+    print("\ndist",dist)
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    s = round(dist,2)
+    image=cv2.line(image,(c12,c11),(c22,c21),(0,255,0),5)
+    cv2.putText(image,str(s),(int((c12+c22)/2)-20,int((c11+c21)/2)), font, 1, (250,250,250), 2, cv2.LINE_AA)
+    #image=cv2.line(image,(c12,c11),(c22,c11),(255,0,0),9)
+    
+
+    return dist
+
+#appeding all calculated distances
+
+def social_dist2(arr,image):
+    sorta = sort(arr)
+    dis = []
+    #print(sorta)
+    lent = arr.shape[0]
+    for i in range(0,lent):
+        if i+1 < lent:
+            d  =dist_bw1(sorta[i],sorta[i+1],image)
+            dis.append(d)
+            
+    return dis
+
+def run_inference_for_single_image(model, image):
+    image = np.asarray(image)
+    input_tensor = tf.convert_to_tensor(image)
+    input_tensor = input_tensor[tf.newaxis,...]
+    output_dict = model(input_tensor)
+    num_detections = int(output_dict.pop('num_detections'))
+    output_dict = {key:value[0, :num_detections].numpy() 
+                 for key,value in output_dict.items()}
+    output_dict['num_detections'] = num_detections
+    output_dict['detection_classes'] = output_dict['detection_classes'].astype(np.int64)
+    if 'detection_masks' in output_dict:
+        detection_masks_reframed = utils_ops.reframe_box_masks_to_image_masks(
+                  output_dict['detection_masks'], output_dict['detection_boxes'],
+                   image.shape[0], image.shape[1])      
+        detection_masks_reframed = tf.cast(detection_masks_reframed > 0.5,
+                                           tf.uint8)
+        output_dict['detection_masks_reframed'] = detection_masks_reframed.numpy()
+
+    return output_dict
+ 
+
+def detect_and_predict_mask(frame, faceNet, maskNet):
+	(h, w) = frame.shape[:2]
+	blob = cv2.dnn.blobFromImage(frame, 1.0, (300, 300),
+		(104.0, 177.0, 123.0))
+	faceNet.setInput(blob)
+	detections = faceNet.forward()
+	faces = []
+	locs = []
+	preds = []
+	for i in range(0, detections.shape[2]):
+		confidence = detections[0, 0, i, 2]
+		if confidence > 0.5:
+			box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
+			(startX, startY, endX, endY) = box.astype("int")
+			(startX, startY) = (max(0, startX), max(0, startY))
+			(endX, endY) = (min(w - 1, endX), min(h - 1, endY))
+			face = frame[startY:endY, startX:endX]
+			face = cv2.cvtColor(face, cv2.COLOR_BGR2RGB)
+			face = cv2.resize(face, (224, 224))
+			face = img_to_array(face)
+			face = preprocess_input(face)
+			face = np.expand_dims(face, axis=0)
+			faces.append(face)
+			locs.append((startX, startY, endX, endY))
+	if len(faces) > 0:
+		preds = maskNet.predict(faces)
+	return (locs, preds)
+  
+  
+  
+ #loading model and weights for face recognition model
+from tensorflow.keras.models import load_model
+faceNet = cv2.dnn.readNet("path for your prototxt file",
+                          "path for your resnet caffe model")
+maskNet = load_model("path for your mask_detector model")
+
+
+
+#facemask and social distance detector for images
+import time
+path = "path for your image"
+image_np = cv2.imread(path)
+d1 , d2 = image_np.shape[0] , image_np.shape[1]
+image_np = cv2.cvtColor(image_np,cv2.COLOR_BGR2RGB)
+# Actual detection.
+#last = time.time()
+last = time.time()
+output_dict = run_inference_for_single_image(detection_model, image_np)
+print("time1:",time.time()-last)
+#print(time.time()-last)
+# Visualization of the results of a detection.
+
+# y x y x
+vis_util.visualize_boxes_and_labels_on_image_array(
+image_np,
+output_dict['detection_boxes'],
+output_dict['detection_classes'],
+output_dict['detection_scores'],
+category_index,
+instance_masks=output_dict.get('detection_masks_reframed', None),
+use_normalized_coordinates=True,
+line_thickness=8)
+array = []
+for i in range(len(output_dict['detection_classes'])):
+    if output_dict['detection_classes'][i]==1:
+        array.append(output_dict['detection_boxes'][i])
+array = np.array(array)
+#print(array,"\n")
+dist = social_dist2(array,image_np)
+
+#image_np = cv2.imread(path)
+#image_np = cv2.cvtColor(image_np,cv2.COLOR_BGR2RGB)
+last = time.time()
+(locs, preds) = detect_and_predict_mask(image_np, faceNet, maskNet)
+print("time2:",time.time()-last)
+
+# loop over the detected face locations and their corresponding
+# locations
+for (box, pred) in zip(locs, preds):
+    # unpack the bounding box and predictions
+    (startX, startY, endX, endY) = box
+    (mask, withoutMask) = pred
+
+    # determine the class label and color we'll use to draw
+    # the bounding box and text
+    label = "Mask" if mask > withoutMask else "No Mask"
+    color = (0, 255, 0) if label == "Mask" else (0, 0, 255)
+
+    # include the probability in the label
+    #label = "{}: {:.2f}%".format(label, max(mask, withoutMask) * 100)
+
+    # display the label and bounding box rectangle on the output
+    # frame
+    cv2.putText(image_np, label, (startX, startY - 10),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
+    cv2.rectangle(image_np, (startX, startY), (endX, endY), color, 2)
+
+
+if len(dist)!=0:
+    key = min(dist)
+    print(key)
+    if   key<0.6:
+        #print(min(social_dist(output_dict['detection_boxes'])))
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(image_np,'Not safe',(0,25), font, 1, (250,0,0), 2, cv2.LINE_AA)
+    else:
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        cv2.putText(image_np,'Safe',(0,25), font, 1, (0,200,100), 2, cv2.LINE_AA)
+        
+print("Min dist ",key)
+    
+display(Image.fromarray(image_np))
+
+
+#facemask and social distance detector from webcam
+
+cap = cv2.VideoCapture(0)
+while True:
+    ret,image_np = cap.read()
+    d1 , d2 = image_np.shape[0] , image_np.shape[1]
+    #image_np = cv2.cvtColor(image_np,cv2.COLOR_BGR2RGB)
+    # Actual detection.
+    #last = time.time()
+    output_dict = run_inference_for_single_image(detection_model, image_np)
+    #print(time.time()-last)
+    # Visualization of the results of a detection.
+
+    # y x y x
+    vis_util.visualize_boxes_and_labels_on_image_array(
+    image_np,
+    output_dict['detection_boxes'],
+    output_dict['detection_classes'],
+    output_dict['detection_scores'],
+    category_index,
+    instance_masks=output_dict.get('detection_masks_reframed', None),
+    use_normalized_coordinates=True,
+    line_thickness=8)
+    array = []
+    for i in range(len(output_dict['detection_classes'])):
+        if output_dict['detection_classes'][i]==1:
+            array.append(output_dict['detection_boxes'][i])
+    array = np.array(array)
+    #print(array,"\n")
+    dist = social_dist2(array,image_np)
+
+    #image_np = cv2.imread(path)
+    #image_np = cv2.cvtColor(image_np,cv2.COLOR_BGR2RGB)
+    (locs, preds) = detect_and_predict_mask(image_np, faceNet, maskNet)
+
+    # loop over the detected face locations and their corresponding
+    # locations
+    for (box, pred) in zip(locs, preds):
+        # unpack the bounding box and predictions
+        (startX, startY, endX, endY) = box
+        (mask, withoutMask) = pred
+
+        # determine the class label and color we'll use to draw
+        # the bounding box and text
+        label = "Mask" if mask > withoutMask else "No Mask"
+        color = (0, 255, 0) if label == "Mask" else (0, 0, 255)
+
+        # include the probability in the label
+        #label = "{}: {:.2f}%".format(label, max(mask, withoutMask) * 100)
+
+        # display the label and bounding box rectangle on the output
+        # frame
+        cv2.putText(image_np, label, (startX, startY - 10),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 2)
+        cv2.rectangle(image_np, (startX, startY), (endX, endY), color, 2)
+
+
+    if len(dist)!=0:
+        key = min(dist)
+        print(key)
+        if   key<0.6:
+            #print(min(social_dist(output_dict['detection_boxes'])))
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            cv2.putText(image_np,'Not safe',(0,25), font, 1, (250,0,0), 2, cv2.LINE_AA)
+        else:
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            cv2.putText(image_np,'Safe',(0,25), font, 1, (0,200,100), 2, cv2.LINE_AA)
+
+    print("Min dist ",key)
+
+    #display(Image.fromarray(image_np))
+
+    cv2.imshow("camera_window",image_np) 
+    k = cv2.waitKey(1) 
+    if k==ord('s'):
+        break
+cap.release()
+cv2.destroyAllWindows()
